@@ -16,7 +16,7 @@ from . import behavior as B
 from .evidence import EvidenceStore
 from .hostid import FileIdentity, location_flags
 from .procmap import UNATTRIBUTED, ProcInfo, ProcessResolver
-from .profiles import MAX_TIMES, DestBaseline, ProfileStore
+from .profiles import MAX_TIMES, DestBaseline, ProcessProfile, ProfileStore
 from .timeline import (CONFIRMED, ESTIMATED, PARTIAL, UNKNOWN, Event, Suggestion,
                        Timeline, level_of)
 from .tlsparse import client_hello_sni
@@ -245,8 +245,12 @@ class HostMonitor:
         if attributed and info.path:
             self._check_identity(key, info, prof, now, monitor)
 
+        # 사용자가 정상으로 확인(trust)한 프로그램은 행동 신호 점수를 주지 않는다.
+        # (실행 파일 변경 감시는 위 _check_identity 에서 계속한다)
+        behavior_on = monitor and not prof.user_trusted
+
         # -- 학습 기간에 없던 프로세스 (감시 중에 기록된 것도 '평소'로 치지 않는다 → 재시연해도 동일)
-        if monitor and not prof.learned and attributed and not browser and self.store.has_baseline \
+        if behavior_on and not prof.learned and attributed and not browser and self.store.has_baseline \
                 and (key, "newproc") not in self._context_done:
             self._context_done.add((key, "newproc"))
             installed = B.installed_location(info.path)
@@ -286,12 +290,12 @@ class HostMonitor:
             flows[dkey].append((s, inf, o, label, dcert))
             self.dest_ips[(key, dkey)].add(o[2])
         for dkey, fl in flows.items():
-            self._analyze_flow(key, info, prof, dkey, fl, browser, monitor, now)
+            self._analyze_flow(key, info, prof, dkey, fl, browser, behavior_on, now)
 
         # -- 업로드 급증
         if self.learning:
             prof.out_rate_peak = max(prof.out_rate_peak, rate)
-        elif rate >= B.THRESH["upload_floor"] and rate >= prof.out_rate_peak * B.THRESH["upload_ratio"]:
+        elif behavior_on and rate >= B.THRESH["upload_floor"] and rate >= prof.out_rate_peak * B.THRESH["upload_ratio"]:
             pts = 1 if browser else B.WEIGHTS["upload_spike"]
             contrib.sort(key=lambda x: -x[0])
             top = contrib[:5]
@@ -319,7 +323,8 @@ class HostMonitor:
 
         # -- 차단 제안 (위험도 '높음' 도달)
         risk = self.timeline.risk(key, now)
-        if monitor and level_of(risk) == "높음" and now - self._suggested.get(key, -1e18) > REFIRE_SEC:
+        if monitor and not prof.user_trusted and level_of(risk) == "높음" \
+                and now - self._suggested.get(key, -1e18) > REFIRE_SEC:
             self._suggested[key] = now
             scored = [e for e in self.timeline.for_process(key) if e.points > 0]
             bad = sorted({e.dest for e in scored if e.dest})
@@ -337,6 +342,26 @@ class HostMonitor:
                     ts=now, proc_key=key, proc_name=name, pid=info.pid if info else 0,
                     start_time=info.start_time if info else 0.0, risk=risk, ips=ips,
                     dests=bad, reasons=[e.text for e in scored][-8:]))
+
+    def trust(self, key: str, now: float) -> Optional[ProcessProfile]:
+        """사용자가 '정상 프로그램'이라고 확인한 프로세스를 등록한다 (trust 명령).
+
+        앱마다 한 번만 사람이 판단하면, 그 뒤로는 그 앱의 행동 신호에 점수를 주지 않는다.
+        새 게임·메신저처럼 학습 기간에 없던 정상 앱을 매번 재학습하지 않기 위한 장치다.
+        """
+        prof = self.store.profiles.get(key)
+        if prof is None:
+            return None
+        prof.user_trusted = True
+        prof.trusted_sha256 = prof.sha256
+        prof.trusted_at = now
+        info = self.proc_info.get(key)
+        self._event(key, info, now, "user_trusted", 0,
+                    "사용자가 정상 프로그램으로 확인 → 이후 행동 신호 점수 제외 (실행 파일 변경 감시는 유지)",
+                    CONFIRMED, name=prof.name,
+                    refs=[("host", prof.path, prof.sha256, prof.sig_status, prof.signer)] if prof.path else None,
+                    measure={"summary": f"확인 시점 SHA-256 {prof.sha256[:16] or '-'}…"})
+        return prof
 
     def take_suggestions(self) -> list[Suggestion]:
         out, self.suggestions = self.suggestions, []
@@ -476,10 +501,20 @@ class HostMonitor:
             prof.file_history.append({"ts": now, "sha256": sha, "sig_status": sig.status,
                                       "signer": sig.signer})
             if same_signer:
+                kept = " · 사용자 신뢰 유지" if prof.user_trusted else ""
+                if prof.user_trusted:
+                    prof.trusted_sha256 = sha
                 self._event(key, info, ts, "binary_updated", 0,
-                            f"실행 파일 변경 (서명자 동일: {sig.signer}) → 정상 업데이트로 추정", ESTIMATED,
+                            f"실행 파일 변경 (서명자 동일: {sig.signer}) → 정상 업데이트로 추정{kept}", ESTIMATED,
                             refs=href, measure={"summary": f"이전 {prof.sha256[:12]}… → 현재 {sha[:12]}…"})
-            elif monitor:
+            if not same_signer and prof.user_trusted:
+                # 사용자가 확인한 것과 다른 파일이 같은 경로에서 실행됨 → 신뢰를 자동 해제
+                prof.user_trusted = False
+                self._event(key, info, ts, "trust_revoked", 0,
+                            "사용자 신뢰 해제: 정상으로 확인한 뒤 실행 파일이 바뀌었고 서명자가 같지 않음",
+                            CONFIRMED, refs=href,
+                            measure={"summary": f"확인 당시 {prof.trusted_sha256[:12]}… → 현재 {sha[:12]}…"})
+            if not same_signer and monitor:
                 why = "서명이 사라짐" if not sig.signed else f"서명자 변경: {prof.signer or '없음'} → {sig.signer}"
                 self._event(key, info, ts, "binary_changed", B.WEIGHTS["binary_changed"],
                             f"실행 파일이 바뀌었고 {why}", CONFIRMED,
@@ -489,7 +524,7 @@ class HostMonitor:
         if sha:
             prof.sha256, prof.sig_status, prof.signer = sha, sig.status, sig.signer
 
-        if not monitor:
+        if not monitor or prof.user_trusted:
             return
         if sig.status not in ("Valid", "Unknown"):
             self._event(key, info, ts, "unsigned", B.WEIGHTS["unsigned"],

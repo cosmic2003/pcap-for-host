@@ -183,6 +183,9 @@ def _incident(inc: dict, doc: dict) -> str:
         ("최초 관측", _t(p["first_seen"], True) + (" (학습 기간에 관측된 프로세스)" if p["learned"]
                                                   else " (학습 기간에 없던 프로세스)")),
     ]
+    if p.get("user_trusted"):
+        proc_rows.append(("사용자 확인", f"정상 프로그램으로 등록됨 ({_t(p.get('trusted_at', 0), True)}) — "
+                                       "이후 행동 신호 점수 제외, 실행 파일 변경 시 자동 해제"))
     for h in p["file_history"]:
         proc_rows.append(("실행 파일 변경", f"{_t(h['ts'], True)} → {e(h['sha256'][:16])}… "
                                        f"({e(h['sig_status'])} {e(h['signer'])})"))

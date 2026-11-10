@@ -188,12 +188,12 @@ class Blocker:
         self._save()
         return b
 
-    def deny(self, bid: int, now: float) -> Block:
+    def deny(self, bid: int, now: float, reason: str = "사용자가 차단을 거절함 (오탐 판단 기록)") -> Block:
         b = self.get(bid)
         if b is None or b.status != "pending":
             raise ValueError(f"대기 중인 차단 #{bid} 가 없습니다")
         b.status = "denied"
-        b.note(now, "거절", "사용자가 차단을 거절함 (오탐 판단 기록)")
+        b.note(now, "거절", reason)
         self._save()
         return b
 

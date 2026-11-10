@@ -195,7 +195,7 @@ def _write_outputs(engine, blocker, host_ip: str, events_path: str | None,
     return doc
 
 
-HELP_CMDS = ("명령: approve N / deny N / unblock N / kill N / list / rollback / help "
+HELP_CMDS = ("명령: approve N / deny N / trust N / unblock N / kill N / list / rollback / help "
              "(입력 후 Enter)")
 
 
@@ -205,7 +205,7 @@ def _stdin_reader(q) -> None:
         q.put(line.strip())
 
 
-def _handle_command(cmd: str, blocker, resolver, now: float) -> None:
+def _handle_command(cmd: str, blocker, resolver, now: float, hostmon=None) -> None:
     parts = cmd.split()
     if not parts:
         return
@@ -216,6 +216,22 @@ def _handle_command(cmd: str, blocker, resolver, now: float) -> None:
             print(f"  → {blocker.describe(b)}" + (f" / 오류: {b.error}" if b.error else ""))
         elif op in ("deny", "n"):
             print(f"  → {blocker.describe(blocker.deny(int(arg), now))}")
+        elif op == "trust":
+            # 차단하지 않고, 이 프로그램을 '정상'으로 등록해 다음부터 행동 신호로 경고하지 않는다
+            b = blocker.get(int(arg))
+            if b is None:
+                raise ValueError(f"차단 #{arg} 가 없습니다")
+            why = "사용자가 정상 프로그램으로 확인 (trust)"
+            if b.status == "pending":
+                blocker.deny(b.bid, now, why)
+            elif b.status == "active":
+                blocker.unblock(b.bid, now, why)
+            prof = hostmon.trust(b.proc_key, now) if hostmon else None
+            if prof is None:
+                print("  → 프로필을 찾지 못해 등록하지 못했습니다")
+            else:
+                print(f"  → {prof.name} 를 정상 프로그램으로 등록했습니다. "
+                      f"실행 파일이 바뀌면(서명자 동일한 업데이트 제외) 자동으로 해제됩니다.")
         elif op == "unblock":
             print(f"  → {blocker.describe(blocker.unblock(int(arg), now))}")
         elif op == "kill":
@@ -252,7 +268,8 @@ def _offer(blocker, sug, now: float) -> None:
     elif b.status == "failed":
         print(f"    → 적용 실패: {b.error}")
     elif b.status == "pending" and blocker.mode == "ask":
-        print(f"    → 승인하려면 'approve {b.bid}', 거절하려면 'deny {b.bid}' 입력")
+        print(f"    → 승인하려면 'approve {b.bid}', 거절하려면 'deny {b.bid}', "
+              f"정상 프로그램이면 'trust {b.bid}' 입력")
     elif b.status == "pending":
         print("    → 제안 모드: 직접 적용하려면 관리자 터미널에서 아래 명령 실행 (또는 --block ask)")
         for argv in blocker.add_commands(b):
@@ -339,7 +356,7 @@ def run_live(duration: float, sweep_sec: float, ioc_path: str | None,
                         writer.write(ts, data)
                 while not cmds.empty():
                     with engine.lock:
-                        _handle_command(cmds.get(), blocker, resolver, now)
+                        _handle_command(cmds.get(), blocker, resolver, now, hm)
                 if now - last_sweep >= sweep_sec:
                     last_sweep = now
                     for f in engine.sweep(now):

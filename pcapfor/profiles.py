@@ -59,6 +59,12 @@ class ProcessProfile:
     bytes_out: int = 0
     out_rate_peak: float = 0.0           # 학습 중 관측한 최대 업로드 속도(바이트/분)
     anomalies: list = field(default_factory=list)      # [{ts, code, text}]
+    # 사용자가 차단 제안에 'trust' 로 답해 정상으로 확인한 프로그램.
+    # 행동 신호(새 목적지·비커닝·업로드 등) 점수는 주지 않지만, 실행 파일이 바뀌면
+    # (서명자가 같지 않은 한) 신뢰를 자동 해제한다. 확인한 시점의 해시를 같이 남긴다.
+    user_trusted: bool = False
+    trusted_sha256: str = ""
+    trusted_at: float = 0.0
 
     def record_anomaly(self, ts: float, code: str, text: str) -> None:
         self.anomalies.append({"ts": ts, "code": code, "text": text})

@@ -207,7 +207,8 @@ python -m pcapfor --report-from pcapfor_events.json --report 보고서.html   # 
 |---|---|
 | 차단 (`block.py`) | `netsh advfirewall` 로 목적지 IP 의 in/out 차단 규칙(`pcapfor-block-N`) 생성. 모드 off / suggest(기본, 명령만 제시) / ask(콘솔 승인) / auto(실험) |
 | 안전장치 | 사설망·이 PC·관측된 DNS 서버·`--allow` 목록은 절대 차단 안 함, TTL 30분 자동 해제, 종료 시 해제(`--keep-blocks` 로 유지), 상태 파일로 비정상 종료 후 복구, 적용 실패 시 반쯤 생긴 규칙 정리 |
-| 콘솔 명령 | `approve N` / `deny N` / `unblock N` / `kill N`(PID 재사용이면 거부) / `list` / `rollback` |
+| 콘솔 명령 | `approve N` / `deny N` / `trust N` / `unblock N` / `kill N`(PID 재사용이면 거부) / `list` / `rollback` |
+| 사용자 확인 (`trust N`) | 차단하지 않고 그 프로그램을 '정상'으로 등록. 이후 행동 신호 점수를 주지 않아 새 게임·메신저를 매번 재학습할 필요가 없음. 실행 파일이 바뀌면(서명자가 같은 업데이트 제외) 자동 해제 |
 | 피해 장부 (`ledger.py`) | 사건별 목적지·전송량·내용 종류(평문/TLS/QUIC/고엔트로피 추정), 차단 전 전송량, 차단 이후 연결 시도·성립·전송 |
 | 사고 보고서 (`incident_report.py`) | 최초 이상 시각, 프로세스 정보, 목적지, 탐지 근거(+MITRE), 전송 기록, 차단 여부·시각, 차단 이후 변화, 확인됨/추정됨/확인 불가 — 위험도 그래프 포함 단일 HTML, Ctrl+P 로 PDF |
 

@@ -276,6 +276,59 @@ def test_rerun_demo_still_flags_new_process():
             assert "new_process" in codes, (round_, codes)
 
 
+def test_trust_quiets_then_revokes_on_binary_change():
+    """trust 로 정상 등록한 앱은 조용해지고, 다른 서명의 파일로 바뀌면 신뢰가 풀린다."""
+    import tempfile as tf
+    from pcapfor.hostid import SigInfo as S
+    game = ProcInfo(5000, "Game.exe", r"C:\Games\Game\Game.exe", T0, 1, "explorer.exe")
+    PROCS[5000] = game
+    shas = {"Game.exe": ("aa" * 32, S("Valid", "Game Studio"))}
+
+    class Ident(FakeIdentity):
+        def sha256(self, path):
+            return shas["Game.exe"][0] if "Game.exe" in path else super().sha256(path)
+
+        def signature(self, path, sha):
+            return shas["Game.exe"][1] if "Game.exe" in path else super().signature(path, sha)
+    try:
+        with tf.TemporaryDirectory() as d:
+            scenario(d)
+            store = ProfileStore(os.path.join(d, "profiles.json"))
+            src = FakeSource()
+            r = ProcessResolver(src)
+            r.poll(now=T0)
+            hm = HostMonitor(r, store, identity=Ident(), local_ips={LOCAL}, started_at=T0)
+            eng = LiveEngine(hostmon=hm)
+            sim = Sim(eng, src)
+            t = T0 + 40000
+            for i in range(10):                      # 5초 주기 하트비트 (롤 클라이언트 같은)
+                sim.conn(t + i * 5, 5000, "203.0.113.70", 443, "hb.game.example", up=300)
+            r.poll(now=t)
+            sim.run(t + 60)
+            assert hm.take_suggestions(), "트러스트 전에는 차단 제안이 나와야 함"
+            before = {e.code for e in hm.timeline.events if e.proc_name == "Game.exe" and e.points}
+            assert "beacon" in before
+            hm.trust(game.key, t + 61)
+            n_scored = sum(1 for e in hm.timeline.events if e.points and e.proc_name == "Game.exe")
+            for i in range(10):                      # 새 서버·같은 패턴 → 점수 없어야 함
+                sim.conn(t + 3000 + i * 5, 5000, "203.0.113.71", 443, "hb2.game.example", up=300)
+            sim.run(t + 3100)
+            after = sum(1 for e in hm.timeline.events if e.points and e.proc_name == "Game.exe")
+            assert after == n_scored, "trust 이후 행동 신호 점수가 생기면 안 됨"
+            assert not hm.take_suggestions()
+            # 다른 서명자의 파일로 바뀜 → 신뢰 해제 + 실행 파일 변경 신호
+            shas["Game.exe"] = ("bb" * 32, S("NotSigned", ""))
+            hm._identity_done.clear()
+            for i in range(3):
+                sim.conn(t + 9000 + i * 5, 5000, "203.0.113.72", 443, "x.example", up=300)
+            sim.run(t + 9100)
+            codes = [e.code for e in hm.timeline.events if e.proc_name == "Game.exe"]
+            assert "trust_revoked" in codes and "binary_changed" in codes, codes
+            assert not store.profiles[game.key].user_trusted
+    finally:
+        PROCS.pop(5000, None)
+
+
 if __name__ == "__main__":
     test_sni_parse()
     test_pid_reuse_and_linger()
