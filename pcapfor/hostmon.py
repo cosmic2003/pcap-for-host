@@ -423,6 +423,10 @@ class HostMonitor:
                                             f"(최소 간격 {t['beacon_min_gaps']}개, 평균 ≥ {t['beacon_min_interval']}s)",
                                  "gaps": gaps[:30], "mean": round(mean, 2), "cv": round(c, 4),
                                  "threshold_cv": t["beacon_max_cv"], "window_sec": self.window})
+        ordered = sorted(recent, key=lambda it: it[0].first_ts)
+        if len(ordered) >= t["beacon_min_gaps"] + 1 and not browser:
+            at = ordered[t["beacon_min_gaps"]][0].first_ts
+            refs = [("net", it[0], it[2], it[3]) for it in ordered[:20]]
             sizes = [it[0].bytes_c2s if it[2][4] else it[0].bytes_s2c for it in ordered]
             sc = B.cv([float(x) for x in sizes if x])
             if sc <= t["size_max_cv"]:
