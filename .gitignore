@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+*.pcap
+*.pcapng
+report.html
+report.json
+sessions.csv
+pcapfor_gui.html

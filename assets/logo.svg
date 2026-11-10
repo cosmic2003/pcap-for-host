@@ -1,0 +1,11 @@
+<svg width="200" height="100" viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- pcap for 로고: 캡모자를 쓴 p (p + cap = pcap) 옆에 작은 for -->
+  <rect x="20" y="36" width="12" height="56" rx="6" fill="#263445"/>
+  <circle cx="48" cy="56" r="15" fill="none" stroke="#263445" stroke-width="12"/>
+  <g transform="rotate(-8 44 28)">
+    <path d="M 26 32 A 21 21 0 0 1 66 32 L 26 32 Z" fill="#1565c0"/>
+    <rect x="60" y="28" width="24" height="8" rx="4" fill="#0d47a1"/>
+    <circle cx="46" cy="13" r="3.5" fill="#0d47a1"/>
+  </g>
+  <text x="92" y="71" font-family="Segoe UI, sans-serif" font-size="34" font-weight="600" fill="#607d8b">for</text>
+</svg>
