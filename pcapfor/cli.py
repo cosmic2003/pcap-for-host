@@ -44,6 +44,27 @@ def build_parser() -> argparse.ArgumentParser:
                    help="탐지 스윕 주기(초, 기본 10)")
     g.add_argument("--save", metavar="FILE",
                    help="수신 패킷을 pcap으로 저장 (증거 보존, 파일 모드로 재분석 가능)")
+    g.add_argument("--learn", action="store_true",
+                   help="학습 모드: 경고 없이 프로세스별 평소 통신을 프로파일에 기록")
+    g.add_argument("--profile", metavar="FILE", default="pcapfor_profiles.json",
+                   help="프로세스 프로파일 저장 위치 (기본 pcapfor_profiles.json)")
+    g.add_argument("--events", metavar="FILE", default="pcapfor_events.json",
+                   help="종료 시 이벤트·사건·피해 장부 JSON 저장 위치 (기본 pcapfor_events.json)")
+    g.add_argument("--report", metavar="FILE", default="pcapfor_incidents.html",
+                   help="사고 보고서 HTML 위치 (기본 pcapfor_incidents.html, 사건이 있을 때만 생성)")
+
+    b = p.add_argument_group("차단 (Windows 방화벽, --live 전용)")
+    b.add_argument("--block", choices=("off", "suggest", "ask", "auto"), default="suggest",
+                   help="off: 안 함 / suggest: 명령만 제시(기본) / ask: 콘솔에서 승인 / auto: 자동 적용(실험)")
+    b.add_argument("--block-ttl", type=float, default=1800, metavar="SEC",
+                   help="차단 자동 해제까지 시간(초, 기본 1800)")
+    b.add_argument("--allow", metavar="FILE", help="절대 차단하지 않을 IP 목록 (줄 단위, # 주석)")
+    b.add_argument("--dry-run", action="store_true", help="방화벽 명령을 실행하지 않고 기록만")
+    b.add_argument("--keep-blocks", action="store_true", help="종료 후에도 적용 중인 차단 유지")
+    b.add_argument("--unblock-all", action="store_true",
+                   help="이 도구가 만든 방화벽 규칙을 모두 지우고 종료")
+    b.add_argument("--report-from", metavar="JSON",
+                   help="저장된 이벤트 JSON 으로 사고 보고서(--report 경로)만 다시 생성")
     return p
 
 
@@ -57,10 +78,26 @@ def main(argv=None) -> int:
             pass
     args = build_parser().parse_args(argv)
 
+    if args.unblock_all:
+        from .live import unblock_all
+        return unblock_all()
+    if args.report_from:
+        from .incident_report import report_from_json
+        try:
+            n = report_from_json(args.report_from, args.report)
+        except (OSError, ValueError) as exc:
+            print(f"오류: {exc}", file=sys.stderr)
+            return 1
+        print(f"사고 보고서 {args.report} 생성 (사건 {n}건)")
+        return 0
     if args.live:
         from .live import run_live
         return run_live(args.duration, args.sweep, args.ioc, args.save,
-                        gui=args.gui is not None)
+                        gui=args.gui is not None, learn=args.learn,
+                        profile_path=args.profile, events_path=args.events,
+                        report_path=args.report, block_mode=args.block,
+                        block_ttl=args.block_ttl, allow_path=args.allow,
+                        dry_run=args.dry_run, keep_blocks=args.keep_blocks)
     if not args.pcap:
         build_parser().print_usage(sys.stderr)
         print("오류: pcap 파일을 지정하거나 --live 를 사용하세요", file=sys.stderr)

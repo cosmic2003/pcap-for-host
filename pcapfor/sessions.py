@@ -31,6 +31,8 @@ class Session:
     synack_seen: bool = False
     fin_seen: bool = False
     rst_seen: bool = False
+    pkt_first: int = 0       # 첫/마지막 패킷의 파일 내 순번 (증거 pcap 의 frame.number 와 같다)
+    pkt_last: int = 0
     # TCP 재조립 버퍼: {seq: payload}
     _segs_c2s: dict = field(default_factory=dict, repr=False)
     _segs_s2c: dict = field(default_factory=dict, repr=False)
@@ -115,6 +117,9 @@ class SessionTable:
             s.client, s.cport, s.server, s.sport = s.server, s.sport, s.client, s.cport
 
         c2s = (p.src, p.sport) == (s.client, s.cport)
+        if not s.pkt_first:
+            s.pkt_first = p.number
+        s.pkt_last = max(s.pkt_last, p.number)
         s.packets += 1
         s.last_ts = max(s.last_ts, p.ts)
         if c2s:

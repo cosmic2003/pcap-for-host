@@ -2,7 +2,10 @@
 
 # pcap for
 
-**PCAP 네트워크 포렌식 분석기**
+**PCAP 네트워크 포렌식 분석기 + 호스트 감시·차단**
+
+> 원본 프로젝트 [solmin111/pcap-for](https://github.com/solmin111/pcap-for) 의 파일 분석기를 기반으로,
+> 프로세스 귀속·프로세스별 학습·차단·사고 보고서·증거 추적 기능을 확장했습니다.
 
 pcap/pcapng 캡처 파일을 읽어 공격 흔적(포트 스캔, 브루트포스, 웹 공격, DNS 터널링,
 C2 통신, ARP 스푸핑, 평문 자격증명 노출)을 자동 탐지하고, 근거·MITRE ATT&CK
@@ -21,8 +24,8 @@ C2 통신, ARP 스푸핑, 평문 자격증명 노출)을 자동 탐지하고, �
 ## 빠른 시작
 
 ```bash
-git clone https://github.com/solmin111/pcap-for.git
-cd pcap-for
+git clone https://github.com/cosmic2003/pcap-for-host.git
+cd pcap-for-host
 
 # 캡처 파일 분석
 python -m pcapfor capture.pcap -v
@@ -85,6 +88,84 @@ python -m pcapfor --live --gui                  # 라이브 GUI 대시보드 (lo
 탐지 스윕은 `--sweep` 초(기본 10)마다 돌고, 같은 탐지는 한 번만 알립니다.
 `--duration 0`(기본)이면 Ctrl+C 로 멈출 때까지 감시하며, 종료 시 누적 탐지 수에 따라
 종료 코드를 돌려줍니다. 루프백(127.0.0.1) 트래픽은 보이지 않습니다.
+
+## 호스트 감시: 프로세스 귀속 · 프로파일 · 타임라인 (`--live`, Windows)
+
+라이브 모드에서 연결마다 **어떤 프로그램이 만들었는지**를 붙이고, 프로세스별 "평소 모습"과
+비교해 위험도를 매깁니다. 결과는 "감염 판정"이 아니라 **근거가 붙은 의심 점수**입니다.
+
+```bash
+python -m pcapfor --live --learn --duration 3600   # 1) 깨끗한 상태에서 평소 통신 학습 (경고 없음)
+python -m pcapfor --live                           # 2) 감시: 평소 대비 이상 신호를 점수로 표시
+```
+
+| 구성 | 내용 |
+|---|---|
+| 프로세스 귀속 (`procmap.py`) | iphlpapi 연결 테이블을 0.5초마다 조회. 끝난 연결도 120초 캐시, PID 재사용은 (PID, 시작 시각)으로 구분, 실패 시 `<미귀속>` 기록 |
+| 실행 파일 신원 (`hostid.py`) | SHA-256, 코드 서명·서명자(PowerShell, 해시별 캐시), Temp/Downloads 실행, 시스템 프로세스 사칭·유사 이름 |
+| 프로세스 프로파일 (`profiles.py`) | 프로세스별 목적지·포트·평소 주기·업로드 속도·파일 변경 이력·이상 기록을 JSON 저장. 감시 중 본 것은 '평소'로 자동 편입하지 않음 |
+| 패턴 비교 (`hostmon.py`, `behavior.py`) | 새 프로세스/목적지, 비표준 포트, 비커닝, 크기 규칙성, 주기 급변(예: 10분→30초), 장시간 연결, 업로드 급증 |
+| 타임라인 (`timeline.py`) | 프로세스별 이벤트와 누적 위험도, 사건(incident) 묶기, '높음' 도달 시 차단 제안 (자동 차단 아님) |
+
+- **확신도 4단계**: 확인됨 / 일부 확인됨(DNS 기반 이름) / 추정됨(ECH, 학습 기준 비교) / 확인 불가(QUIC 등 이름 없음)
+- 브라우저의 새 사이트 접속, 평소 도메인의 새 하위 서버(`cdn.kakao.com`)는 이상으로 보지 않음
+- 서명이 없다는 사실만으로는 악성으로 판단하지 않음 (1점짜리 약한 신호)
+- 실행 파일이 바뀌어도 **서명자가 같으면 정상 업데이트로 추정**, 서명이 사라지거나 서명자가 바뀌면 강한 신호
+- 종료 시 `pcapfor_profiles.json`(프로파일), `pcapfor_events.json`(이벤트·사건) 저장
+
+**전제와 한계**: 학습 구간의 PC 가 깨끗하다고 가정합니다. Windows raw socket 은 수신 패킷을 TCP 스택 처리 뒤에 넘겨주므로, 증거 pcap 을 Wireshark 로 열면 'Spurious Retransmission' 같은 순서 경고가 보일 수 있습니다(데이터 유실 아님). 아주 짧은 연결은 조회 전에 끝나
+`<미귀속>`이 될 수 있고(종료 시 귀속 성공률 표시), 암호화 통신은 내용이 아닌 시각·양·목적지로만 판단합니다.
+
+테스트(윈도우 없이 가짜 연결 테이블로 학습→감시 시나리오 재현): `python tests/test_hostmon.py`
+
+### 차단 · 피해 장부 · 사고 보고서
+
+```bash
+python -m pcapfor --live --block ask              # 위험도 '높음'이면 차단 제안 → 콘솔에 approve N 입력
+python -m pcapfor --live --block ask --dry-run    # 명령은 실행하지 않고 기록만 (시연 리허설용)
+python -m pcapfor --unblock-all                   # 이 도구가 만든 방화벽 규칙 전부 삭제
+python -m pcapfor --report-from pcapfor_events.json --report 보고서.html   # 보고서만 다시 생성
+```
+
+| 구성 | 내용 |
+|---|---|
+| 차단 (`block.py`) | `netsh advfirewall` 로 목적지 IP 의 in/out 차단 규칙(`pcapfor-block-N`) 생성. 모드 off / suggest(기본, 명령만 제시) / ask(콘솔 승인) / auto(실험) |
+| 안전장치 | 사설망·이 PC·관측된 DNS 서버·`--allow` 목록은 절대 차단 안 함, TTL 30분 자동 해제, 종료 시 해제(`--keep-blocks` 로 유지), 상태 파일로 비정상 종료 후 복구, 적용 실패 시 반쯤 생긴 규칙 정리 |
+| 콘솔 명령 | `approve N` / `deny N` / `unblock N` / `kill N`(PID 재사용이면 거부) / `list` / `rollback` |
+| 피해 장부 (`ledger.py`) | 사건별 목적지·전송량·내용 종류(평문/TLS/QUIC/고엔트로피 추정), 차단 전 전송량, 차단 이후 연결 시도·성립·전송 |
+| 사고 보고서 (`incident_report.py`) | 최초 이상 시각, 프로세스 정보, 목적지, 탐지 근거(+MITRE), 전송 기록, 차단 여부·시각, 차단 이후 변화, 확인됨/추정됨/확인 불가 — 위험도 그래프 포함 단일 HTML, Ctrl+P 로 PDF |
+
+막는 단위는 프로그램이 아니라 **목적지 IP** 입니다(감염 파일이 이름·위치를 바꿔도 유지되도록).
+첫 패킷 몇 개는 탐지 전에 이미 나가므로, 이 기능은 침투 방어가 아니라 **감염 이후 피해 확대를 끊는** 용도입니다.
+
+테스트: `python tests/test_block_report.py` (시뮬레이션 사고 보고서 HTML 생성)
+
+## 시연 방법 (실제 PC, Windows)
+
+가짜 비콘(`demo/fake_beacon.py`)은 **감염된 프로그램의 네트워크 행동만 흉내 내는 무해한 스크립트**입니다.
+파일·개인정보를 읽지 않고 무작위 더미 바이트만 보내며, 정해진 시간 뒤 스스로 종료합니다.
+파이썬 실행 파일을 `%TEMP%\pcapfor_demo\update.exe` 로 복사해 실행하므로, 도구 입장에선
+"Temp 에서 실행된, 학습 때 없던 프로그램"이 됩니다.
+
+```powershell
+# 0) (사전) 평소처럼 PC 를 쓰며 30분 이상 학습
+python -m pcapfor --live --learn --duration 1800
+
+# 1) 관리자 창 A: 감시 + 콘솔 승인 차단
+python -m pcapfor --live --block ask
+
+# 2) 일반 창 B: 가짜 비콘 시작 (30초 주기, 8번째 체크인 뒤 1MB 더미 업로드, 10분 뒤 종료)
+python demo\fake_beacon.py install
+
+# 3) 창 A 에 '차단 제안 #1' 이 뜨면 approve 1 → 창 B 로그에 '체크인 실패' 가 찍히는지 확인
+# 4) 창 A 에서 Ctrl+C → pcapfor_incidents.html 열어 Ctrl+P → PDF 저장
+# 5) 정리
+python demo\fake_beacon.py clean
+python -m pcapfor --unblock-all
+```
+
+변형: `--name svchost.exe`(시스템 프로세스 사칭), `--mode plain`(비표준 포트 4444),
+`--jitter 0.3`(주기 ±30% 흔들기 — 탐지가 어디서 깨지는지 보는 평가 실험용).
 
 ## 아키텍처
 
