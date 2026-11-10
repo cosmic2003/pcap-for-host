@@ -455,7 +455,7 @@ class HostMonitor:
             if s.duration >= t["long_conn_sec"] and not browser and not s.fin_seen and not s.rst_seen \
                     and (rport not in B.STD_PORTS or not known):
                 self._event(key, info, s.first_ts + t["long_conn_sec"], "long_conn",
-                            B.WEIGHTS["long_conn"],
+                            self._capped(key, "long_conn", s.first_ts + t["long_conn_sec"]),
                             f"외부 연결을 {s.duration / 60:.0f}분 이상 유지: {label}", CONFIRMED, dest=dkey,
                             refs=[("net", s, o, label)],
                             measure={"summary": f"연결 유지 {s.duration:.0f}s ≥ 기준 {t['long_conn_sec']:.0f}s, 종료 패킷 없음"})
